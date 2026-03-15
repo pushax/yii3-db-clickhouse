@@ -4,8 +4,9 @@ declare(strict_types=1);
 
 namespace Pushax\Db\ClickHouse\Migration;
 
-use Yiisoft\Db\Connection\ConnectionInterface;
+use Pushax\Db\ClickHouse\ClickHouseDataType;
 use Pushax\Db\ClickHouse\TableEngine;
+use Yiisoft\Db\Connection\ConnectionInterface;
 use Yiisoft\Db\Migration\Informer\MigrationInformerInterface;
 use Yiisoft\Db\Migration\MigrationBuilder;
 use Yiisoft\Db\Schema\Column\ColumnInterface;
@@ -35,10 +36,10 @@ use function sprintf;
  *             $b->createMergeTreeTable(
  *                 'events',
  *                 [
- *                     'event_date' => 'Date',
- *                     'event_type' => 'String',
- *                     'user_id' => 'UInt64',
- *                     'value' => 'Float64',
+ *                     'event_date' => ClickHouseType::DATE,
+ *                     'event_type' => ClickHouseType::STRING,
+ *                     'user_id'    => ClickHouseType::UINT64,
+ *                     'value'      => ClickHouseType::FLOAT64,
  *                 ],
  *                 orderBy: ['event_date', 'event_type', 'user_id'],
  *                 partitionBy: 'toYYYYMM(event_date)',
@@ -46,10 +47,10 @@ use function sprintf;
  *         } else {
  *             // Standard approach also works:
  *             $b->createTable('events', [
- *                 'event_date' => 'Date',
- *                 'event_type' => 'String',
- *                 'user_id' => 'UInt64',
- *                 'value' => 'Float64',
+ *                 'event_date' => ClickHouseType::DATE,
+ *                 'event_type' => ClickHouseType::STRING,
+ *                 'user_id'    => ClickHouseType::UINT64,
+ *                 'value'      => ClickHouseType::FLOAT64,
  *             ], 'ENGINE = MergeTree() PARTITION BY toYYYYMM(event_date) ORDER BY (event_date, event_type, user_id)');
  *         }
  *     }

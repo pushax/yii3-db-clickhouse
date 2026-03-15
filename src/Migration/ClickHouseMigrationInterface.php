@@ -22,11 +22,11 @@ namespace Pushax\Db\ClickHouse\Migration;
  *         $b->createMergeTreeTable(
  *             'events',
  *             [
- *                 'event_date' => 'Date',
- *                 'event_type' => 'LowCardinality(String)',
- *                 'user_id' => 'UInt64',
- *                 'value' => 'Float64',
- *                 'metadata' => 'String',
+ *                 'event_date' => ClickHouseType::DATE,
+ *                 'event_type' => ClickHouseType::lowCardinality(ClickHouseType::STRING),
+ *                 'user_id'    => ClickHouseType::UINT64,
+ *                 'value'      => ClickHouseType::FLOAT64,
+ *                 'metadata'   => ClickHouseType::STRING,
  *             ],
  *             orderBy: ['event_date', 'event_type', 'user_id'],
  *             partitionBy: 'toYYYYMM(event_date)',

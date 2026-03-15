@@ -57,6 +57,7 @@ $rows = $db->createQuery()
 Use `TableBuilder` for a fluent interface to ClickHouse-specific `CREATE TABLE` syntax:
 
 ```php
+use Pushax\Db\ClickHouse\ClickHouseDataType;
 use Pushax\Db\ClickHouse\TableBuilder;
 use Pushax\Db\ClickHouse\TableEngine;
 
@@ -65,10 +66,10 @@ $builder = new TableBuilder($db);
 $builder
     ->table('events')
     ->ifNotExists()
-    ->column('event_date', 'Date')
-    ->column('event_type', 'LowCardinality(String)')
-    ->column('user_id', 'UInt64')
-    ->column('value', 'Float64')
+    ->column('event_date', ClickHouseDataType::DATE)
+    ->column('event_type', ClickHouseDataType::lowCardinality(ClickHouseDataType::STRING))
+    ->column('user_id', ClickHouseDataType::UINT64)
+    ->column('value', ClickHouseDataType::FLOAT64)
     ->engine(TableEngine::MERGE_TREE)
     ->partitionBy('toYYYYMM(event_date)')
     ->orderBy(['event_date', 'event_type', 'user_id'])
@@ -165,6 +166,7 @@ $mutation->killMutation($mutationId, 'events');
 
 ```php
 use Pushax\Db\ClickHouse\BatchInsert;
+use Pushax\Db\ClickHouse\ClickHouseDataType;
 
 $batch = new BatchInsert($db, 'events', ['event_date', 'user_id', 'value'], batchSize: 1000);
 
@@ -212,6 +214,7 @@ $pm->clearColumnInPartition('events', '202301', 'metadata');
 Implement `ClickHouseMigrationInterface` to write ClickHouse-specific migrations:
 
 ```php
+use Pushax\Db\ClickHouse\ClickHouseDataType;
 use Pushax\Db\ClickHouse\Migration\ClickHouseMigrationInterface;
 use Pushax\Db\ClickHouse\Migration\ClickHouseMigrationBuilder;
 
@@ -222,10 +225,10 @@ final class M240101_000000_CreateEventsTable implements ClickHouseMigrationInter
         $b->createMergeTreeTable(
             'events',
             [
-                'event_date' => 'Date',
-                'event_type' => 'LowCardinality(String)',
-                'user_id'    => 'UInt64',
-                'value'      => 'Float64',
+                'event_date' => ClickHouseDataType::DATE,
+                'event_type' => ClickHouseDataType::lowCardinality(ClickHouseDataType::STRING),
+                'user_id'    => ClickHouseDataType::UINT64,
+                'value'      => ClickHouseDataType::FLOAT64,
             ],
             orderBy: ['event_date', 'event_type', 'user_id'],
             partitionBy: 'toYYYYMM(event_date)',
@@ -243,6 +246,54 @@ final class M240101_000000_CreateEventsTable implements ClickHouseMigrationInter
 ```
 
 > **Note:** ClickHouse migrations are never transactional — all operations are applied immediately.
+
+## Column Types
+
+All ClickHouse type names are available as constants on `ClickHouseDataType`:
+
+```php
+use Pushax\Db\ClickHouse\ClickHouseDataType;
+
+// Integers
+ClickHouseDataType::INT8 / INT16 / INT32 / INT64 / INT128 / INT256
+ClickHouseDataType::UINT8 / UINT16 / UINT32 / UINT64 / UINT128 / UINT256
+
+// Floats
+ClickHouseDataType::FLOAT32
+ClickHouseDataType::FLOAT64
+
+// Decimal
+ClickHouseDataType::decimal(10, 2)   // → 'Decimal(10, 2)'
+
+// Boolean
+ClickHouseDataType::BOOL
+
+// Strings
+ClickHouseDataType::STRING
+ClickHouseDataType::fixedString(16)  // → 'FixedString(16)'
+
+// Dates
+ClickHouseDataType::DATE
+ClickHouseDataType::DATE32
+ClickHouseDataType::DATETIME
+ClickHouseDataType::dateTime64(3)                    // → 'DateTime64(3)'
+ClickHouseDataType::dateTime64(3, 'Europe/London')   // → 'DateTime64(3, 'Europe/London')'
+
+// Other
+ClickHouseDataType::UUID
+ClickHouseDataType::IPV4
+ClickHouseDataType::IPV6
+ClickHouseDataType::JSON
+
+// Enums
+ClickHouseDataType::enum8(['active' => 1, 'archived' => 2])   // → "Enum8('active' = 1, 'archived' = 2)"
+ClickHouseDataType::enum16(['active' => 1, 'archived' => 2])
+
+// Wrappers
+ClickHouseDataType::nullable(ClickHouseDataType::STRING)                      // → 'Nullable(String)'
+ClickHouseDataType::lowCardinality(ClickHouseDataType::STRING)                // → 'LowCardinality(String)'
+ClickHouseDataType::array(ClickHouseDataType::UINT64)                        // → 'Array(UInt64)'
+```
 
 ## Testing
 
