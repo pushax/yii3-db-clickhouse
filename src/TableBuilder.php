@@ -24,10 +24,10 @@ use Yiisoft\Db\Schema\Column\ColumnInterface;
  * $builder = new TableBuilder($connection);
  * $sql = $builder
  *     ->table('events')
- *     ->column('event_date', ClickHouseType::DATE)
- *     ->column('event_type', ClickHouseType::STRING)
- *     ->column('user_id', ClickHouseType::UINT64)
- *     ->column('value', ClickHouseType::FLOAT64)
+ *     ->column('event_date', ClickHouseDataType::DATE)
+ *     ->column('event_type', ClickHouseDataType::STRING)
+ *     ->column('user_id', ClickHouseDataType::UINT64)
+ *     ->column('value', ClickHouseDataType::FLOAT64)
  *     ->engine(TableEngine::MERGE_TREE)
  *     ->partitionBy('toYYYYMM(event_date)')
  *     ->orderBy(['event_date', 'event_type', 'user_id'])

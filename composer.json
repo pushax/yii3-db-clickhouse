@@ -21,10 +21,10 @@
     "require": {
         "php": "8.1 - 8.5",
         "ext-ctype": "*",
-        "ext-pdo": "*",
         "ext-curl": "*",
         "psr/log": "^2.0|^3.0",
-        "yiisoft/db": "^2.0"
+        "yiisoft/db": "^2.0",
+        "yiisoft/db-migration": "^2.0"
     },
     "require-dev": {
         "bamarni/composer-bin-plugin": "^1.8.3",

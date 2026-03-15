@@ -26,6 +26,37 @@ final class ColumnDefinitionBuilder extends AbstractColumnDefinitionBuilder
 {
     protected const AUTO_INCREMENT_KEYWORD = '';
 
+    /**
+     * Maps lowercase type names (as stored by the parser) to proper ClickHouse type names.
+     * The parser calls strtolower() on all types, but ClickHouse type names are case-sensitive.
+     */
+    private const CH_TYPE_CASE = [
+        'uint8'    => 'UInt8',   'uint16'   => 'UInt16',  'uint32'  => 'UInt32',  'uint64'  => 'UInt64',
+        'uint128'  => 'UInt128', 'uint256'  => 'UInt256',
+        'int8'     => 'Int8',    'int16'    => 'Int16',   'int32'   => 'Int32',   'int64'   => 'Int64',
+        'int128'   => 'Int128',  'int256'   => 'Int256',
+        'float32'  => 'Float32', 'float64'  => 'Float64',
+        'decimal'  => 'Decimal', 'decimal32' => 'Decimal32', 'decimal64' => 'Decimal64',
+        'decimal128' => 'Decimal128', 'decimal256' => 'Decimal256',
+        'bool'     => 'Bool',    'boolean'  => 'Bool',
+        'string'   => 'String',  'fixedstring' => 'FixedString',
+        'date'     => 'Date',    'date32'   => 'Date32',
+        'datetime' => 'DateTime', 'datetime64' => 'DateTime64',
+        'uuid'     => 'UUID',
+        'enum8'    => 'Enum8',   'enum16'   => 'Enum16',
+        'ipv4'     => 'IPv4',    'ipv6'     => 'IPv6',
+        'json'     => 'JSON',
+        'array'    => 'Array',   'tuple'    => 'Tuple',   'map'     => 'Map',
+        'nested'   => 'Nested',
+        'lowcardinality' => 'LowCardinality',
+        'nullable'       => 'Nullable',
+        'simpleaggregatefunction' => 'SimpleAggregateFunction',
+        'aggregatefunction'       => 'AggregateFunction',
+        'nothing'  => 'Nothing',
+        'point'    => 'Point',   'ring'     => 'Ring',    'polygon' => 'Polygon',
+        'multipolygon' => 'MultiPolygon',
+    ];
+
     protected const TYPES_WITH_SIZE = [
         'fixedstring',
         'decimal',
@@ -147,8 +178,15 @@ final class ColumnDefinitionBuilder extends AbstractColumnDefinitionBuilder
     {
         $isUnsigned = $column->isUnsigned();
 
+        // The parser lowercases all type names, but ClickHouse types are case-sensitive.
+        // Restore proper casing when the dbType came from a parsed definition.
+        $dbType = $column->getDbType();
+        if ($dbType !== null) {
+            return self::CH_TYPE_CASE[strtolower($dbType)] ?? $dbType;
+        }
+
         /** @psalm-suppress DocblockTypeContradiction */
-        return $column->getDbType() ?? match ($column->getType()) {
+        return match ($column->getType()) {
             ColumnType::BOOLEAN => 'Bool',
             ColumnType::BIT => 'UInt64',
             ColumnType::TINYINT => $isUnsigned ? 'UInt8' : 'Int8',

@@ -9,63 +9,61 @@ use Pushax\Db\ClickHouse\TableEngine;
 use Yiisoft\Db\Connection\ConnectionInterface;
 use Yiisoft\Db\Migration\Informer\MigrationInformerInterface;
 use Yiisoft\Db\Migration\MigrationBuilder;
+use Yiisoft\Db\Query\QueryInterface;
 use Yiisoft\Db\Schema\Column\ColumnInterface;
 
 use function implode;
+use function is_bool;
 use function is_string;
-use function microtime;
-use function sprintf;
 
 /**
- * Extends the standard MigrationBuilder with ClickHouse-specific table creation support.
+ * Wraps MigrationBuilder with ClickHouse-specific table creation helpers.
  *
- * The standard `createTable()` method uses `$options` parameter to pass the ENGINE and other clauses.
- * This builder adds a `createMergeTreeTable()` convenience method for the most common use case.
+ * Since MigrationBuilder is final, this class uses composition and delegates
+ * all standard migration methods to the inner builder instance.
  *
  * Usage in migration:
  * ```php
- * use Pushax\Db\ClickHouse\Column\ColumnBuilder;
+ * use Pushax\Db\ClickHouse\ClickHouseDataType;
  * use Pushax\Db\ClickHouse\TableEngine;
  *
- * final class M240101_000000_CreateEventsTable implements MigrationInterface
+ * final class M240101_000000_CreateEventsTable implements ClickHouseMigrationInterface
  * {
- *     public function up(MigrationBuilder $b): void
+ *     public function up(ClickHouseMigrationBuilder $b): void
  *     {
- *         // If $b is a ClickHouseMigrationBuilder, use native methods:
- *         if ($b instanceof ClickHouseMigrationBuilder) {
- *             $b->createMergeTreeTable(
- *                 'events',
- *                 [
- *                     'event_date' => ClickHouseType::DATE,
- *                     'event_type' => ClickHouseType::STRING,
- *                     'user_id'    => ClickHouseType::UINT64,
- *                     'value'      => ClickHouseType::FLOAT64,
- *                 ],
- *                 orderBy: ['event_date', 'event_type', 'user_id'],
- *                 partitionBy: 'toYYYYMM(event_date)',
- *             );
- *         } else {
- *             // Standard approach also works:
- *             $b->createTable('events', [
- *                 'event_date' => ClickHouseType::DATE,
- *                 'event_type' => ClickHouseType::STRING,
- *                 'user_id'    => ClickHouseType::UINT64,
- *                 'value'      => ClickHouseType::FLOAT64,
- *             ], 'ENGINE = MergeTree() PARTITION BY toYYYYMM(event_date) ORDER BY (event_date, event_type, user_id)');
- *         }
+ *         $b->createMergeTreeTable('events',
+ *             [
+ *                 'event_date' => ClickHouseDataType::DATE,
+ *                 'event_type' => ClickHouseDataType::STRING,
+ *                 'user_id' => ClickHouseDataType::UINT64,
+ *                 'value' => ClickHouseDataType::FLOAT64,
+ *             ],
+ *             orderBy: ['event_date', 'event_type', 'user_id'],
+ *             partitionBy: 'toYYYYMM(event_date)');
+ *     }
+ *
+ *     public function down(ClickHouseMigrationBuilder $b): void
+ *     {
+ *         $b->dropTable('events');
  *     }
  * }
  * ```
  */
-final class ClickHouseMigrationBuilder extends MigrationBuilder
+final class ClickHouseMigrationBuilder
 {
+    private readonly MigrationBuilder $builder;
+
     public function __construct(
-        private readonly ConnectionInterface $clickHouseDb,
+        private readonly ConnectionInterface $db,
         MigrationInformerInterface $informer,
         ?int $maxSqlOutputLength = null,
     ) {
-        parent::__construct($clickHouseDb, $informer, $maxSqlOutputLength);
+        $this->builder = new MigrationBuilder($db, $informer, $maxSqlOutputLength);
     }
+
+    // -------------------------------------------------------------------------
+    // ClickHouse-specific methods
+    // -------------------------------------------------------------------------
 
     /**
      * Creates a table with MergeTree family engine.
@@ -100,12 +98,12 @@ final class ClickHouseMigrationBuilder extends MigrationBuilder
         }
 
         if ($orderBy !== null) {
-            $orderColumns = is_array($orderBy) ? implode(', ', $orderBy) : $orderBy;
+            $orderColumns = is_string($orderBy) ? $orderBy : implode(', ', $orderBy);
             $options .= " ORDER BY ($orderColumns)";
         }
 
         if ($primaryKey !== null) {
-            $pkColumns = is_array($primaryKey) ? implode(', ', $primaryKey) : $primaryKey;
+            $pkColumns = is_string($primaryKey) ? $primaryKey : implode(', ', $primaryKey);
             $options .= " PRIMARY KEY ($pkColumns)";
         }
 
@@ -118,22 +116,18 @@ final class ClickHouseMigrationBuilder extends MigrationBuilder
         }
 
         if (!empty($settings)) {
-            $settingParts = [];
+            $parts = [];
             foreach ($settings as $key => $value) {
-                if (is_bool($value)) {
-                    $settingParts[] = "$key = " . ($value ? '1' : '0');
-                } else {
-                    $settingParts[] = "$key = $value";
-                }
+                $parts[] = "$key = " . (is_bool($value) ? ($value ? '1' : '0') : $value);
             }
-            $options .= ' SETTINGS ' . implode(', ', $settingParts);
+            $options .= ' SETTINGS ' . implode(', ', $parts);
         }
 
         if ($comment !== null) {
-            $options .= ' COMMENT ' . $this->clickHouseDb->getQuoter()->quoteValue($comment);
+            $options .= ' COMMENT ' . $this->db->getQuoter()->quoteValue($comment);
         }
 
-        $this->createTable($table, $columns, $options);
+        $this->builder->createTable($table, $columns, $options);
     }
 
     /**
@@ -158,9 +152,8 @@ final class ClickHouseMigrationBuilder extends MigrationBuilder
         ?string $partitionBy = null,
         array $settings = [],
     ): void {
-        $quoter = $this->clickHouseDb->getQuoter();
+        $quoter = $this->db->getQuoter();
         $engineParams = $quoter->quoteValue($zookeeperPath) . ', ' . $quoter->quoteValue($replicaName);
-
         $options = "ENGINE = ReplicatedMergeTree($engineParams)";
 
         if ($partitionBy !== null) {
@@ -168,24 +161,24 @@ final class ClickHouseMigrationBuilder extends MigrationBuilder
         }
 
         if ($orderBy !== null) {
-            $orderColumns = is_array($orderBy) ? implode(', ', $orderBy) : $orderBy;
+            $orderColumns = is_string($orderBy) ? $orderBy : implode(', ', $orderBy);
             $options .= " ORDER BY ($orderColumns)";
         }
 
         if ($primaryKey !== null) {
-            $pkColumns = is_array($primaryKey) ? implode(', ', $primaryKey) : $primaryKey;
+            $pkColumns = is_string($primaryKey) ? $primaryKey : implode(', ', $primaryKey);
             $options .= " PRIMARY KEY ($pkColumns)";
         }
 
         if (!empty($settings)) {
-            $settingParts = [];
+            $parts = [];
             foreach ($settings as $key => $value) {
-                $settingParts[] = "$key = $value";
+                $parts[] = "$key = $value";
             }
-            $options .= ' SETTINGS ' . implode(', ', $settingParts);
+            $options .= ' SETTINGS ' . implode(', ', $parts);
         }
 
-        $this->createTable($table, $columns, $options);
+        $this->builder->createTable($table, $columns, $options);
     }
 
     /**
@@ -197,13 +190,11 @@ final class ClickHouseMigrationBuilder extends MigrationBuilder
      */
     public function createMaterializedView(string $viewName, string $toTable, string $selectQuery): void
     {
-        $quoter = $this->clickHouseDb->getQuoter();
-
+        $quoter = $this->db->getQuoter();
         $sql = 'CREATE MATERIALIZED VIEW ' . $quoter->quoteTableName($viewName)
             . ' TO ' . $quoter->quoteTableName($toTable)
             . ' AS ' . $selectQuery;
-
-        $this->execute($sql);
+        $this->builder->execute($sql);
     }
 
     /**
@@ -211,8 +202,8 @@ final class ClickHouseMigrationBuilder extends MigrationBuilder
      */
     public function dropMaterializedView(string $viewName): void
     {
-        $sql = 'DROP VIEW IF EXISTS ' . $this->clickHouseDb->getQuoter()->quoteTableName($viewName);
-        $this->execute($sql);
+        $sql = 'DROP VIEW IF EXISTS ' . $this->db->getQuoter()->quoteTableName($viewName);
+        $this->builder->execute($sql);
     }
 
     /**
@@ -223,9 +214,8 @@ final class ClickHouseMigrationBuilder extends MigrationBuilder
      */
     public function createDictionary(string $name, string $definition): void
     {
-        $sql = 'CREATE DICTIONARY ' . $this->clickHouseDb->getQuoter()->quoteTableName($name)
-            . "\n" . $definition;
-        $this->execute($sql);
+        $sql = 'CREATE DICTIONARY ' . $this->db->getQuoter()->quoteTableName($name) . "\n" . $definition;
+        $this->builder->execute($sql);
     }
 
     /**
@@ -233,8 +223,8 @@ final class ClickHouseMigrationBuilder extends MigrationBuilder
      */
     public function dropDictionary(string $name): void
     {
-        $sql = 'DROP DICTIONARY IF EXISTS ' . $this->clickHouseDb->getQuoter()->quoteTableName($name);
-        $this->execute($sql);
+        $sql = 'DROP DICTIONARY IF EXISTS ' . $this->db->getQuoter()->quoteTableName($name);
+        $this->builder->execute($sql);
     }
 
     /**
@@ -253,13 +243,11 @@ final class ClickHouseMigrationBuilder extends MigrationBuilder
         string $type,
         int $granularity = 1,
     ): void {
-        $quoter = $this->clickHouseDb->getQuoter();
-
+        $quoter = $this->db->getQuoter();
         $sql = 'ALTER TABLE ' . $quoter->quoteTableName($table)
             . ' ADD INDEX ' . $quoter->quoteColumnName($name)
             . " ($expression) TYPE $type GRANULARITY $granularity";
-
-        $this->execute($sql);
+        $this->builder->execute($sql);
     }
 
     /**
@@ -267,12 +255,10 @@ final class ClickHouseMigrationBuilder extends MigrationBuilder
      */
     public function dropSkippingIndex(string $table, string $name): void
     {
-        $quoter = $this->clickHouseDb->getQuoter();
-
+        $quoter = $this->db->getQuoter();
         $sql = 'ALTER TABLE ' . $quoter->quoteTableName($table)
             . ' DROP INDEX ' . $quoter->quoteColumnName($name);
-
-        $this->execute($sql);
+        $this->builder->execute($sql);
     }
 
     /**
@@ -284,13 +270,11 @@ final class ClickHouseMigrationBuilder extends MigrationBuilder
      */
     public function addProjection(string $table, string $name, string $selectQuery): void
     {
-        $quoter = $this->clickHouseDb->getQuoter();
-
+        $quoter = $this->db->getQuoter();
         $sql = 'ALTER TABLE ' . $quoter->quoteTableName($table)
             . ' ADD PROJECTION ' . $quoter->quoteColumnName($name)
             . " ($selectQuery)";
-
-        $this->execute($sql);
+        $this->builder->execute($sql);
     }
 
     /**
@@ -298,12 +282,10 @@ final class ClickHouseMigrationBuilder extends MigrationBuilder
      */
     public function dropProjection(string $table, string $name): void
     {
-        $quoter = $this->clickHouseDb->getQuoter();
-
+        $quoter = $this->db->getQuoter();
         $sql = 'ALTER TABLE ' . $quoter->quoteTableName($table)
             . ' DROP PROJECTION ' . $quoter->quoteColumnName($name);
-
-        $this->execute($sql);
+        $this->builder->execute($sql);
     }
 
     /**
@@ -314,11 +296,10 @@ final class ClickHouseMigrationBuilder extends MigrationBuilder
      */
     public function modifyOrderBy(string $table, string|array $columns): void
     {
-        $orderColumns = is_array($columns) ? implode(', ', $columns) : $columns;
-        $sql = 'ALTER TABLE ' . $this->clickHouseDb->getQuoter()->quoteTableName($table)
+        $orderColumns = is_string($columns) ? $columns : implode(', ', $columns);
+        $sql = 'ALTER TABLE ' . $this->db->getQuoter()->quoteTableName($table)
             . " MODIFY ORDER BY ($orderColumns)";
-
-        $this->execute($sql);
+        $this->builder->execute($sql);
     }
 
     /**
@@ -329,10 +310,9 @@ final class ClickHouseMigrationBuilder extends MigrationBuilder
      */
     public function modifyTtl(string $table, string $ttlExpression): void
     {
-        $sql = 'ALTER TABLE ' . $this->clickHouseDb->getQuoter()->quoteTableName($table)
+        $sql = 'ALTER TABLE ' . $this->db->getQuoter()->quoteTableName($table)
             . " MODIFY TTL $ttlExpression";
-
-        $this->execute($sql);
+        $this->builder->execute($sql);
     }
 
     /**
@@ -340,10 +320,8 @@ final class ClickHouseMigrationBuilder extends MigrationBuilder
      */
     public function removeTtl(string $table): void
     {
-        $sql = 'ALTER TABLE ' . $this->clickHouseDb->getQuoter()->quoteTableName($table)
-            . ' REMOVE TTL';
-
-        $this->execute($sql);
+        $sql = 'ALTER TABLE ' . $this->db->getQuoter()->quoteTableName($table) . ' REMOVE TTL';
+        $this->builder->execute($sql);
     }
 
     /**
@@ -354,18 +332,141 @@ final class ClickHouseMigrationBuilder extends MigrationBuilder
      */
     public function modifySettings(string $table, array $settings): void
     {
-        $settingParts = [];
+        $parts = [];
         foreach ($settings as $key => $value) {
-            if (is_bool($value)) {
-                $settingParts[] = "$key = " . ($value ? '1' : '0');
-            } else {
-                $settingParts[] = "$key = $value";
-            }
+            $parts[] = "$key = " . (is_bool($value) ? ($value ? '1' : '0') : $value);
         }
+        $sql = 'ALTER TABLE ' . $this->db->getQuoter()->quoteTableName($table)
+            . ' MODIFY SETTING ' . implode(', ', $parts);
+        $this->builder->execute($sql);
+    }
 
-        $sql = 'ALTER TABLE ' . $this->clickHouseDb->getQuoter()->quoteTableName($table)
-            . ' MODIFY SETTING ' . implode(', ', $settingParts);
+    // -------------------------------------------------------------------------
+    // Delegated standard MigrationBuilder methods
+    // -------------------------------------------------------------------------
 
-        $this->execute($sql);
+    public function getDb(): ConnectionInterface
+    {
+        return $this->builder->getDb();
+    }
+
+    public function execute(string $sql, array $params = []): void
+    {
+        $this->builder->execute($sql, $params);
+    }
+
+    public function insert(string $table, array $columns): void
+    {
+        $this->builder->insert($table, $columns);
+    }
+
+    public function batchInsert(string $table, array $columns, iterable $rows): void
+    {
+        $this->builder->batchInsert($table, $columns, $rows);
+    }
+
+    public function update(string $table, array $columns, array|string $condition = '', array $params = []): void
+    {
+        $this->builder->update($table, $columns, $condition, $params);
+    }
+
+    public function delete(string $table, array|string $condition = '', array $params = []): void
+    {
+        $this->builder->delete($table, $condition, $params);
+    }
+
+    public function createTable(string $table, array $columns, ?string $options = null): void
+    {
+        $this->builder->createTable($table, $columns, $options);
+    }
+
+    public function renameTable(string $table, string $newName): void
+    {
+        $this->builder->renameTable($table, $newName);
+    }
+
+    public function dropTable(string $table): void
+    {
+        $this->builder->dropTable($table);
+    }
+
+    public function truncateTable(string $table): void
+    {
+        $this->builder->truncateTable($table);
+    }
+
+    public function addColumn(string $table, string $column, ColumnInterface|string $type): void
+    {
+        $this->builder->addColumn($table, $column, $type);
+    }
+
+    public function dropColumn(string $table, string $column): void
+    {
+        $this->builder->dropColumn($table, $column);
+    }
+
+    public function renameColumn(string $table, string $name, string $newName): void
+    {
+        $this->builder->renameColumn($table, $name, $newName);
+    }
+
+    public function alterColumn(string $table, string $column, ColumnInterface|string $type): void
+    {
+        $this->builder->alterColumn($table, $column, $type);
+    }
+
+    public function addPrimaryKey(string $table, string $name, array|string $columns): void
+    {
+        $this->builder->addPrimaryKey($table, $name, $columns);
+    }
+
+    public function dropPrimaryKey(string $table, string $name): void
+    {
+        $this->builder->dropPrimaryKey($table, $name);
+    }
+
+    public function createIndex(
+        string $table,
+        string $name,
+        array|string $columns,
+        ?string $indexType = null,
+        ?string $indexMethod = null,
+    ): void {
+        $this->builder->createIndex($table, $name, $columns, $indexType, $indexMethod);
+    }
+
+    public function dropIndex(string $table, string $name): void
+    {
+        $this->builder->dropIndex($table, $name);
+    }
+
+    public function createView(string $viewName, QueryInterface|string $subQuery): void
+    {
+        $this->builder->createView($viewName, $subQuery);
+    }
+
+    public function dropView(string $viewName): void
+    {
+        $this->builder->dropView($viewName);
+    }
+
+    public function addCommentOnColumn(string $table, string $column, string $comment): void
+    {
+        $this->builder->addCommentOnColumn($table, $column, $comment);
+    }
+
+    public function addCommentOnTable(string $table, string $comment): void
+    {
+        $this->builder->addCommentOnTable($table, $comment);
+    }
+
+    public function dropCommentFromColumn(string $table, string $column): void
+    {
+        $this->builder->dropCommentFromColumn($table, $column);
+    }
+
+    public function dropCommentFromTable(string $table): void
+    {
+        $this->builder->dropCommentFromTable($table);
     }
 }
